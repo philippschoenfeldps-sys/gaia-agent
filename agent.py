@@ -17,9 +17,10 @@ from dotenv import load_dotenv
 from smolagents import CodeAgent, DuckDuckGoSearchTool, LiteLLMModel, VisitWebpageTool
 
 from fetch_questions import API_URL, FILES_DIR
+import tools                                    # Module access for tools.last_chess_moves
 from tools import FILE_TOOLS, KNOWLEDGE_TOOLS, fetch_page_markdown
 
-load_dotenv()       # Get the key=value pairs
+load_dotenv()                                   # Get the key=value pairs
 
 # Windows console fix: when output is piped (e.g., "| Tee-Object"), Python on Windows encodes text as cp1252, which cannot represent emojis.
 import sys
@@ -57,6 +58,10 @@ Strategy:
 - For facts that are on Wikipedia, prefer wikipedia_search + wikipedia_page over web search.
   Use the 'section' argument for long pages and 'as_of_date' if the question names a year/version.
 - For YouTube links, use youtube_transcript.
+- For an attached image: it is shown to you directly, look at it carefully.
+  For a chess position: first list every piece with its square (e.g. "White: Kg1, Rd1 ... Black: Kg8 ..."), 
+  then build the FEN from that list (side to move from the question), then call chess_analyze(fen).
+  If it says "Illegal position", re-check the board.
 - Use web_search + visit_webpage for everything else. Verify numbers on the source page.
 - If a page is long or visit_webpage output is truncated, use search_webpage(url, query)
   to jump directly to the passages you need instead of visiting the page again.
@@ -72,6 +77,9 @@ Strategy:
 # A Pattern that detects garbage code:
 # if the agent hits max_steps, smolagents forces a final answer from an unfinished state and weak models sometimes return their code as the "answer".
 CODE_PATTERN = re.compile(r"`{2,}|\bimport \w+|final_answer\(|print\(")
+
+# Attachments with these endings are shown to the multimodal model directly (no tool needed).
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 
 class VisitWebpageWithHint(VisitWebpageTool):
     """
@@ -181,7 +189,29 @@ class GaiaAgent:
             executor_kwargs = {"timeout_seconds": 120},         # Allow 120 s (smolagents stops every code step after 30 s by default).
             planning_interval = PLANNING_INTERVAL,
             verbosity_level = 2,                                # Print the full Thought / Code / Observation trace
+            final_answer_checks = [self._check_chess_answer],   # Code-enforced rules: run before a final answer is accepted (if a check fails, the answer is rejected).
         )
+
+    def _check_chess_answer(self, final_answer, memory, agent = None) -> bool:
+        """
+        final_answer_check: for chess questions, the answer must come from chess_analyze.
+        smolagents calls it as check(final_answer, memory, agent=...). Raising an exception rejects the answer. 
+        The exception text is shown to the model, so it says exactly what to do next.
+        """
+        if not self._chess_task:
+            return True                                         # All other questions: no extra rule
+
+        moves = tools.last_chess_moves
+        if moves is None:
+            raise ValueError("Answer rejected: you have not called chess_analyze(fen) with a valid FEN. "
+                             "Build the FEN from your piece list and call print(chess_analyze(fen)) first.")
+
+        # Compare without check/mate symbols: "Rd8#" and "Rd8" mean the same move.
+        clean = lambda move: str(move).strip().rstrip("+#")
+        if moves and clean(final_answer) not in [clean(m) for m in moves]:
+            raise ValueError(f"Answer rejected: '{final_answer}' is not a move reported by chess_analyze. "
+                             f"Choose one of: {', '.join(moves)}")
+        return True
 
     def __call__(self, question: str, task_id: str = "", file_name: str = "") -> str:
         task = question
@@ -195,13 +225,42 @@ class GaiaAgent:
                 task += (
                     f"\n\nThe attached file is available locally at: {path.as_posix()}\n"
                     "Use the matching tool: read_spreadsheet (Excel/CSV), read_text_file or "
-                    "run_python_file (.py), transcribe_audio (.mp3/.wav)."
+                    "run_python_file (.py), transcribe_audio (.mp3/.wav). "
+                    "Images (.png/.jpg) are attached to this message so you can see them directly."
                 )
  
         task += f"\n\n{TOOL_HINTS}\n{ANSWER_RULES}"
- 
+
+        # Images go to the multimodal model directly: 
+        # smolagents attaches them to the task message, so the model can look at the image again in every step.
+        images = None
+
+        if file_name and path is not None and Path(file_name).suffix.lower() in IMAGE_SUFFIXES:
+            from PIL import Image
+            images = [Image.open(path).convert("RGB")]          # RGB: drop transparency, which some APIs reject
+
+        # Chess routing: a short, numbered procedure at the very end of the task (strongest position in the prompt).
+        self._chess_task = bool(images) and "chess" in question.lower()
+        tools.last_chess_moves = None
+
+        if images and "chess" in question.lower():
+            task += (
+                "\n\nCHESS PROCEDURE (mandatory, in this order):\n"
+                "1. First code block: print() every piece with its square, rank by rank from 8 down to 1,\n"
+                "   e.g. print('Rank 8: Black Rf8, Black Kg8') ... print('Rank 1: White Kg1').\n"
+                "   Check the board orientation using the coordinate labels in the image:\n"
+                "   - White's view: bottom-left square is a1, files a-h left to right, rank 1 at the bottom.\n"
+                "   - Black's view (rank numbers 1-8 run top to bottom): bottom-left square is h8,\n"
+                "     files h-a left to right, rank 8 at the bottom. Translate every square accordingly.\n"
+                "   - Piece colour: white pieces = UPPERCASE in FEN, black pieces = lowercase.\n"
+                "2. Next code block: build the FEN from that list (side to move from the question)\n"
+                "   and call print(chess_analyze(fen)).\n"
+                "3. If it says 'Illegal position', fix the FEN and call chess_analyze again.\n"
+                "4. Answer ONLY with a move that chess_analyze reported. Do NOT calculate moves yourself."
+            )
+            
         try:
-            raw_answer = self.agent.run(task)
+            raw_answer = self.agent.run(task, images = images)  # For questions without a picture
         except Exception as e:
 
             # Never crash the whole evaluation because of one question.
@@ -210,9 +269,16 @@ class GaiaAgent:
  
         answer = normalize_answer(raw_answer)
 
-        # Garbage guard: code is never a valid GAIA answer (n empty answer is better).
+        # Garbage guard: code is never a valid GAIA answer (an empty answer is better).
         if CODE_PATTERN.search(answer):
             print(f"[agent warning] answer looks like code, discarded: {answer[:80]!r}")
+            return ""
+
+        # Second chess check after the run: answers forced by "Reached max steps" bypass smolagents' final_answer_checks.
+        try:
+            self._check_chess_answer(answer, None)
+        except ValueError as e:
+            print(f"[agent warning] {e} -> discarded")
             return ""
 
         return answer

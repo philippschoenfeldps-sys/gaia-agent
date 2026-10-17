@@ -129,8 +129,93 @@ def transcribe_audio(path: str) -> str:
     except Exception as e:
         return f"Error transcribing '{path}': {e}"
 
+# Chess analysis: the LLM reads the board from the image and writes it as FEN, python-chess does the calculation.
+last_chess_moves = None         # Moves reported by the last successfull chess_analyze call (read by the answer check in agent.py).
+
+def _every_reply_allows_mate(board, moves_left: int) -> bool:
+    """Helper (not a tool): after our move, True if every opponent reply still lets us force mate."""
+    for reply in list(board.legal_moves):
+        board.push(reply)
+        ok = _can_force_mate(board, moves_left)
+        board.pop()
+
+        if not ok:
+            return False                # One good defence is enough to refute our move.
+    return True
+
+
+def _can_force_mate(board, moves_left: int) -> bool:
+    """Helper (not a tool): True if the side to move can force checkmate within `moves_left` moves."""
+    for move in list(board.legal_moves):
+        board.push(move)
+        mated = board.is_checkmate() or (
+            moves_left > 1 and not board.is_game_over()
+            and _every_reply_allows_mate(board, moves_left - 1)
+        )
+        board.pop()                     # Always undo the move -> board is unchanged for the next try.
+
+        if mated:
+            return True
+        
+    return False
+
+@tool
+def chess_analyze(fen: str) -> str:
+    """
+    Analyzes a chess position and lists forced checkmates (in 1 or 2 moves) for the side to move.
+    If there is none, it lists all checks and captures as candidate moves.
+    Use this for chess questions: first write the position from the image as FEN, then call this.
+
+    Args:
+        fen: The position in FEN notation, e.g. "6k1/5ppp/8/8/8/8/5PPP/3R2K1 w - - 0 1".
+            Ranks from 8 down to 1, then "w" or "b" for the side to move.
+    """
+    global last_chess_moves         # Assign the module-level variable
+    import chess
+
+    try:
+        board = chess.Board(fen)
+    except ValueError as e:
+        return f"Invalid FEN '{fen}': {e}"
+
+    # Catch impossible positions (e.g. missing king, pawns on rank 1/8), which usually means the board was misread from the image.
+    if not board.is_valid():
+        return f"Illegal position ({board.status()!r}). Re-check the piece placement and the side to move."
+
+    side = "White" if board.turn == chess.WHITE else "Black"
+    mate_in_1, mate_in_2 = [], []
+
+    for move in list(board.legal_moves):
+        san = board.san(move)           # Algebraic notation (e.g. "Rd8#") must be computed before push.
+        board.push(move)
+
+        if board.is_checkmate():
+            mate_in_1.append(san)
+        elif not board.is_game_over() and _every_reply_allows_mate(board, 1):
+            mate_in_2.append(san)
+        board.pop()
+
+    lines = [f"Position: {board.fen()}", f"Side to move: {side}"]
+    if mate_in_1:
+        lines.append(f"Checkmate in 1: {', '.join(mate_in_1)}")
+
+    if mate_in_2:
+        lines.append(f"Forced checkmate in 2, first move: {', '.join(mate_in_2)}")
+
+    if not (mate_in_1 or mate_in_2):
+        checks = [board.san(m) for m in board.legal_moves if board.gives_check(m)]
+        captures = [board.san(m) for m in board.legal_moves if board.is_capture(m)]
+        lines.append("No forced checkmate within 2 moves.")
+        lines.append(f"Checks: {', '.join(checks) or 'none'}")
+        lines.append(f"Captures: {', '.join(captures) or 'none'}")
+
+    # Remember the result for the final-answer check (only reached with a valid position).
+    last_chess_moves = mate_in_1 + mate_in_2
+
+    return "\n".join(lines)
+
 # Convenient list for agent.py: "from tools import FILE_TOOLS"
-FILE_TOOLS = [read_spreadsheet, read_text_file, run_python_file, transcribe_audio]
+FILE_TOOLS = [read_spreadsheet, read_text_file, run_python_file, transcribe_audio, chess_analyze]
 
 import re
 import requests
@@ -367,7 +452,6 @@ def search_webpage(url: str, query: str) -> str:
 
     return _truncate(f"Matches for '{query}' on {url}:\n\n" + "\n\n".join(blocks))
 
- 
 # Convenient list for agent.py: "from tools import KNOWLEDGE_TOOLS"
 KNOWLEDGE_TOOLS = [wikipedia_search, wikipedia_page, youtube_transcript, search_webpage]
 

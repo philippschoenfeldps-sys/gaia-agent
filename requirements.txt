@@ -11,9 +11,12 @@ python-dotenv
 # Web tools
 ddgs
 markdownify
+beautifulsoup4
 
 # File tools
 openpyxl
 faster-whisper
 av<19
 youtube-transcript-api
+chess
+pillow
