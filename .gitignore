@@ -1,0 +1,9 @@
+.venv/
+.env
+data/
+__pycache__/
+*.pyc
+.vscode/
+.ipynb_checkpoints/
+Thumbs.db
+logs/

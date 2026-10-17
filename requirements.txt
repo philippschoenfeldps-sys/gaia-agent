@@ -1,2 +1,19 @@
-gradio
+# Course template
+gradio[oauth]
 requests
+pandas
+
+# Agent framework + model access
+smolagents[litellm]
+tenacity
+python-dotenv
+
+# Web tools
+ddgs
+markdownify
+
+# File tools
+openpyxl
+faster-whisper
+av<19
+youtube-transcript-api
