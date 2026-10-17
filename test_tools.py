@@ -1,12 +1,10 @@
 """
-test_tools.py  –  Test level 2: do the tools work ON THEIR OWN?
+Test Tools
 
-Calls every tool directly, WITHOUT the LLM → costs zero API quota.
-If a tool is broken here, the agent can never succeed with it, no matter how good the model is.
-That's why we test tools first: it separates "tool bug" from "model mistake".
+Calls every tool directly, without the LLM. 
 
-Run:  python test_tools.py            → all tools
-      python test_tools.py wiki audio → only selected groups (wiki, files, audio, youtube)
+Run:  python test_tools.py              -> all tools
+      python test_tools.py wiki audio   -> only selected groups (wiki, files, audio, youtube)
 """
 
 import json
@@ -25,7 +23,8 @@ def show(title: str, result: str, max_len: int = 600) -> None:
     print(f"\n--- {title} ---")
     text = str(result)
     print(text[:max_len] + (" […]" if len(text) > max_len else ""))
-    # Our tools return errors as text (summary 4.4) → detect them here.
+
+    # Tools return errors as text -> detect them here.
     if text.lower().startswith(("error", "could not")):
         print(">>> ⚠ the tool reported an error")
 
@@ -44,6 +43,7 @@ groups = set(sys.argv[1:]) or {"wiki", "files", "audio", "youtube"}
 if "wiki" in groups:
     show("wikipedia_search", tools.wikipedia_search("Mercedes Sosa"))
     show("wikipedia_page (section)", tools.wikipedia_page("Mercedes Sosa", section="Discography"))
+
     # Old revision: should show the article as it was at the end of 2022.
     show("wikipedia_page (as_of_date)", tools.wikipedia_page("Mercedes Sosa", section="Discography",
                                                              as_of_date="2022-12-31"))
@@ -59,19 +59,23 @@ if "files" in groups:
     show(f"run_python_file({py.name if py else None})", tools.run_python_file(str(py)) if py else "no .py found")
 
 if "audio" in groups:
-    # First call downloads the Whisper model once (a few hundred MB) → can take a while.
+
+    # First call downloads the Whisper model once (a few hundred MB) -> can take a while.
     mp3 = file_with_suffix(".mp3")
     show(f"transcribe_audio({mp3.name if mp3 else None})",
          tools.transcribe_audio(str(mp3)) if mp3 else "no .mp3 found")
 
 if "youtube" in groups:
-    # Test EVERY YouTube link that appears in the question texts.
-    # Note: a video without subtitles returns an error by design (e.g. a question about what is SHOWN).
+
+    # Test every YouTube link that appears in the question texts (a video without subtitles returns an error by design).
     urls = sorted({m.group(0) for q in questions
-                   for m in re.finditer(r"https?://(?:www\.)?youtube\.com/watch\?v=[\w-]{11}", q["question"])})
+                   
+    for m in re.finditer(r"https?://(?:www\.)?youtube\.com/watch\?v=[\w-]{11}", q["question"])})
+
     for url in urls:
         show(f"youtube_transcript({url})", tools.youtube_transcript(url))
+        
     if not urls:
         print("\n--- youtube_transcript ---\nno YouTube link found")
-        
+
 print("\nDone. Check each block: real content = tool works; an error text = fix the tool first.")

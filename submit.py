@@ -22,13 +22,13 @@ API_URL = "https://agents-course-unit4-scoring.hf.space"
 ANSWERS_PATH = Path("data") / "answers.json"
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Submit cached GAIA answers.")
+    parser = argparse.ArgumentParser(description = "Submit cached GAIA answers.")
     parser.add_argument("--send", action = "store_true", help = "really submit (default: dry run)")
     args = parser.parse_args()
  
     username = os.getenv("HF_USERNAME", "").strip()
     code_url = os.getenv("CODE_URL", "").strip()
-    
+
     if not username or not code_url:
         raise SystemExit("Set HF_USERNAME and CODE_URL in your .env file first.")
  

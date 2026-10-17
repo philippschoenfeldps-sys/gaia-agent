@@ -1,5 +1,5 @@
 """
-check_setup.py  –  Test level 1: is the environment configured correctly?
+Is the environment configured correctly?
 
 Checks (in this order, cheapest first):
 1. .env is found and the important values are set
@@ -19,12 +19,13 @@ from pathlib import Path
 from dotenv import find_dotenv, load_dotenv
 
 OK, FAIL, WARN = "[ OK ]", "[FAIL]", "[WARN]"
-problems = 0  # counts failed checks → exit code at the end
+problems = 0                        # Counts failed checks -> exit code at the end
 
 
 def check(condition: bool, ok_msg: str, fail_msg: str, warn_only: bool = False) -> None:
     """Print one result line and count failures."""
     global problems
+
     if condition:
         print(f"{OK} {ok_msg}")
     elif warn_only:
@@ -35,18 +36,20 @@ def check(condition: bool, ok_msg: str, fail_msg: str, warn_only: bool = False) 
 
 
 print("=== 1. Configuration (.env) ===")
-env_path = find_dotenv(usecwd=True)  # searches the current folder (and parents) for .env
+env_path = find_dotenv(usecwd=True)             # Searches the current folder (and parents) for .env
 check(bool(env_path), f".env found: {env_path}", ".env not found → create it in the project root")
 load_dotenv(env_path)
 
 model_id = os.getenv("MODEL_ID", "")
 check(bool(model_id), f"MODEL_ID = {model_id}", "MODEL_ID is not set")
+
 # Placeholders like "<id-...>" mean the real ID was not filled in yet.
 check("<" not in model_id, "MODEL_ID contains no placeholder", "MODEL_ID still contains a <placeholder>")
 
 if model_id.startswith("gemini/"):
     key = os.getenv("GEMINI_API_KEY", "")
-    # Never print the full key! Only the first characters, to recognize it.
+
+    # Never print the full key: only the first characters, to recognize it.
     check(len(key) > 20 and "your_" not in key,
           f"GEMINI_API_KEY set ({key[:6]}…, {len(key)} characters)",
           "GEMINI_API_KEY missing or still the placeholder")
@@ -59,7 +62,7 @@ check(bool(os.getenv("HF_USERNAME")) and "your_" not in os.getenv("HF_USERNAME",
       "HF_USERNAME not set (only needed for submit.py)", warn_only=True)
 
 print("\n=== 2. Packages ===")
-# import name → pip package name (they differ sometimes!)
+# import name -> pip package name
 packages = {
     "smolagents": "smolagents[litellm]", "litellm": "smolagents[litellm]",
     "ddgs": "ddgs", "markdownify": "markdownify", "pandas": "pandas", "openpyxl": "openpyxl",
@@ -73,9 +76,9 @@ for module, pip_name in packages.items():
     except ImportError:
         check(False, "", f"{module} missing → python -m pip install \"{pip_name}\"")
 
-# Importing tools.py also validates every @tool docstring (catches the "Args: " bug!).
+# Importing tools.py also validates every @tool docstring (catches the "Args: " bug).
 try:
-    import tools  # noqa: F401
+    import tools            # noqa: F401
     check(True, "tools.py imports (all tool docstrings valid)", "")
 except Exception as e:
     check(False, "", f"tools.py fails to import: {e}")
@@ -94,10 +97,12 @@ else:
         from agent import build_model
 
         model = build_model()
-        # smolagents models take a list of chat messages (summary section 3).
+
+        # smolagents models take a list of chat messages
         reply = model([{"role": "user", "content": [{"type": "text", "text": "Reply with exactly: OK"}]}])
         check(True, f"model answered: {reply.content.strip()[:50]!r}", "")
     except Exception as e:
+        
         # Typical: wrong model ID (404), invalid key (400/403), quota exhausted (429).
         check(False, "", f"model call failed: {type(e).__name__}: {str(e)[:300]}")
 
