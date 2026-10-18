@@ -42,8 +42,7 @@ Images are passed directly to the multimodal model (`agent.run(task, images=[...
 
 ## Lessons learned
 
-- Most failures came from plumbing, not from the model: an unregistered tool, a missing `images=` argument, a 403 caused by the default User-Agent.
-- Weak models ignore prompt rules; must-have behaviour has to be enforced in code.
+- Weak models ignore prompt rules: must-have behaviour has to be enforced in code.
 - LLMs can fabricate tool observations (invent outputs of code they never ran), so answers should be traceable to real tool results in the execution log.
 - One benchmark run is a sample: outputs vary between runs.
 
